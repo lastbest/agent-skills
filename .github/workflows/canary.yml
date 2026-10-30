@@ -1,0 +1,60 @@
+# Weekly proof that the sites these skills scrape still look the way we expect.
+# A redesign makes a skill return nothing rather than fail, so silence is the
+# failure mode we are guarding against.
+#
+# Note: GitHub disables scheduled workflows on public repos after 60 days with
+# no commits. If this has been quiet for months, check that it is still enabled.
+name: canary
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"   # Mondays, 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run canaries
+        id: run
+        run: |
+          set -o pipefail
+          python scripts/run_canaries.py 2>&1 | tee canary.log
+
+      - name: Open an issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try { log = fs.readFileSync('canary.log', 'utf8').slice(-4000); } catch {}
+            const title = 'Canary failed: a scraped site may have changed';
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'canary',
+            });
+            const body = [
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '', '```', log || '(no output captured)', '```',
+            ].join('\n');
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['canary'],
+              });
+            }

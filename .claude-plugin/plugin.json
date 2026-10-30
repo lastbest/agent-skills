@@ -1,0 +1,21 @@
+{
+  "name": "agent-skills",
+  "description": "Portable SKILL.md agent skills for Claude Code, Codex and Cursor. Currently: Korean civil-defense (민방위) education schedule lookup.",
+  "version": "0.1.0",
+  "author": {
+    "name": "lastbest",
+    "url": "https://github.com/lastbest"
+  },
+  "homepage": "https://github.com/lastbest/agent-skills",
+  "repository": "https://github.com/lastbest/agent-skills",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "agent-skills",
+    "claude-code",
+    "codex",
+    "cursor",
+    "korea",
+    "civil-defense"
+  ]
+}
