@@ -245,6 +245,35 @@ def resolve(regions: dict, tokens: list[str]):
 ROW_RE = re.compile(r'class="area"\s+href="javascript:viewDetale\((.*?)\);"', re.S)
 FIELDS = ("지역", "교육대상", "교육구분", "교육일시", "교육장소", "지번주소", "도로명주소")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+URL_RE = re.compile(r"https?://[^\s]+")
+
+MAP_URL = BASE + CTX + "/flsm/flsm/miniMap.do"
+# encodeURIComponent가 남겨두는 문자들. 그래야 사이트가 만드는 URL과 똑같아진다.
+_JS_SAFE = "-_.!~*'()"
+
+
+def link_for(row: dict) -> str:
+    """교육장소를 누르면 사이트가 여는 곳과 같은 URL.
+
+    사이트의 onMoveMap(juso, title)은 juso에 도로명주소를, title에 교육장소명을
+    넣어 부르는데, 둘 다 우리가 이미 파싱하는 필드다(확인함). 그래서 onMoveMap을
+    따로 긁지 않고 여기서 똑같이 만든다.
+
+    장소명 안에 URL이 박혀 있으면(사이버교육의 kcmes.kr) 사이트는 지도 대신 그
+    URL을 연다. 도로명주소도 URL도 없으면 사이트는 '도로명주소 정보가 없습니다'로
+    끝나므로 빈 문자열을 준다.
+    """
+    m = URL_RE.search(row.get("교육장소", ""))
+    if m:
+        return m.group(0).rstrip(")\"',")
+    juso = (row.get("도로명주소") or "").strip()
+    if not juso:
+        return ""
+    q = urllib.parse.urlencode(
+        {"juso": juso, "title": (row.get("교육장소") or "").strip()},
+        quote_via=lambda s, sfe, enc, err: urllib.parse.quote(s, safe=_JS_SAFE),
+    )
+    return f"{MAP_URL}?{q}"
 
 
 def parse_rows(page: str) -> list[dict]:
@@ -261,6 +290,8 @@ def parse_rows(page: str) -> list[dict]:
         # 원본 DB에 지역/일자가 비어 있는 빈 레코드가 간혹 섞여 나온다 (교육일시가 ': ~ :')
         if not row["지역"] or not DATE_RE.match(row["교육일시"]):
             continue
+        row["주소"] = row["도로명주소"] or row["지번주소"]
+        row["링크"] = link_for(row)
         rows.append(row)
     return rows
 
@@ -473,12 +504,40 @@ def cmd_schedule(args) -> int:
     if args.time:
         print(f"교육시간: {EDU_TIMES.get(args.time, args.time)}")
     print()
+    venues = index_venues(rows)
+    for r in rows:
+        r["장소"] = f"{r['교육장소']} [{venues[r['교육장소']][0]}]" if r["교육장소"] in venues \
+            else r["교육장소"]
     cols = ["교육일시"] + (["시군구"] if sweep else []) + \
-           ["지역", "교육대상", "교육구분", "교육장소"]
+           ["지역", "교육대상", "교육구분", "장소"]
     if not args.no_contact:
         cols += ["연락처"]
     print_table(rows, cols)
+    print_venues(venues)
     return 0
+
+
+def index_venues(rows: list[dict]) -> dict:
+    """교육장소 -> (번호, 주소, 링크). 장소는 몇 개 안 되고 계속 반복되므로,
+    표마다 긴 주소와 URL을 늘어놓는 대신 아래에 각주로 한 번씩만 적는다."""
+    out: dict[str, tuple] = {}
+    for r in rows:
+        place = r.get("교육장소", "")
+        if place and place not in out:
+            out[place] = (len(out) + 1, r.get("주소", ""), r.get("링크", ""))
+    return out
+
+
+def print_venues(venues: dict) -> None:
+    if not venues:
+        return
+    print("\n교육장소")
+    for place, (n, addr, link) in sorted(venues.items(), key=lambda kv: kv[1][0]):
+        print(f"  [{n}] {place}")
+        if addr:
+            print(f"      {addr}")
+        if link:
+            print(f"      {link}")
 
 
 def print_summary(rows: list[dict], tokens: list[str], start: str, end: str,
@@ -497,6 +556,7 @@ def print_summary(rows: list[dict], tokens: list[str], start: str, end: str,
         key = (date, when, r.get("시군구", ""), r["교육대상"], r["교육구분"], r["교육장소"])
         groups.setdefault(key, []).append(r["지역"])
 
+    venues = index_venues(rows)
     print(f"[{' '.join(tokens)}] {start} ~ {end} 민방위 교육일정")
     print(f"{len(rows)}건 / {len(groups)}개 교육회차\n")
     cur = None
@@ -506,8 +566,10 @@ def print_summary(rows: list[dict], tokens: list[str], start: str, end: str,
             print(f"\n## {date}")
         head = f"  {when}  " + (f"{sgg}  " if sweep else "")
         print(f"{head}{kind} / {tgt}")
-        print(f"      {place}")
+        n = venues.get(place, (None,))[0]
+        print(f"      {place}" + (f" [{n}]" if n else ""))
         print(f"      대상 {len(dongs)}개동: {' '.join(dongs)}")
+    print_venues(venues)
     return 0
 
 

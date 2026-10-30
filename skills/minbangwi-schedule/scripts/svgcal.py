@@ -63,17 +63,22 @@ def short(name: str) -> str:
 
 
 def collect(rows: list[dict], label_key: str) -> dict:
-    """날짜 -> [(시간대, 라벨)] (중복 제거, 시간대 -> 이름 순 정렬)"""
-    days: dict[str, set] = {}
+    """날짜 -> [(시간대, 라벨, 링크)] (중복 제거, 시간대 -> 이름 순 정렬)
+
+    한 칸(날짜+지역+시간대)에 여러 교육장이 묶이면 어디로 보낼지 알 수 없으므로
+    링크를 비운다. 엉뚱한 곳으로 보내느니 안 거는 게 낫다.
+    """
+    days: dict[str, dict] = {}
     for r in rows:
         m = DATE_RE.search(r.get("교육일시", ""))
         if not m:
             continue
-        days.setdefault(m.group(0), set()).add(
-            (bucket_of(r), short(r.get(label_key) or r.get("지역", "")))
-        )
+        key = (bucket_of(r), short(r.get(label_key) or r.get("지역", "")))
+        links = days.setdefault(m.group(0), {}).setdefault(key, set())
+        links.add(r.get("링크", ""))
     return {
-        d: sorted(v, key=lambda x: (ORDER[x[0]], x[1]))
+        d: [(bk, name, next(iter(ls)) if len(ls) == 1 else "")
+            for (bk, name), ls in sorted(v.items(), key=lambda kv: (ORDER[kv[0][0]], kv[0][1]))]
         for d, v in days.items()
     }
 
@@ -138,12 +143,20 @@ def render(rows: list[dict], heading: str, start: str, end: str,
 
                 if not inside:
                     continue
-                for j, (bk, name) in enumerate(days.get(d.isoformat(), [])):
+                for j, (bk, name, href) in enumerate(days.get(d.isoformat(), [])):
                     cy = y + CELL_TOP + j * ROW_H
+                    if href:
+                        body.append(f'<a href="{escape(href, {chr(34): "&quot;"})}" '
+                                    f'target="_blank" rel="noopener">')
+                        body.append(f'<rect class="hit" x="{x + 6}" y="{cy - 1}" '
+                                    f'width="{COL_W - 12}" height="13" rx="3"/>')
                     body.append(f'<rect class="bar b{ORDER[bk]}" x="{x + 9}" y="{cy}" '
                                 f'width="3" height="11" rx="1.5"/>')
-                    body.append(f'<text class="chip" x="{x + 17}" y="{cy + 9.5}">'
+                    cls = "chip link" if href else "chip"
+                    body.append(f'<text class="{cls}" x="{x + 17}" y="{cy + 9.5}">'
                                 f'{escape(name + bk)}</text>')
+                    if href:
+                        body.append("</a>")
             y += h + GAP
         y += 10
 
@@ -184,6 +197,10 @@ viewBox="0 0 {w} {h}" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto S
   .dnum.sun {{ fill: var(--sun); }}
   .dnum.off {{ fill: var(--text-muted); font-weight: 400; }}
   .chip {{ fill: var(--text-primary); font-size: 10.5px; }}
+  .hit {{ fill: transparent; }}
+  a {{ cursor: pointer; }}
+  a:hover .hit {{ fill: var(--surface-0); }}
+  a:hover .chip.link {{ text-decoration: underline; }}
   .b0 {{ fill: var(--b0); }} .b1 {{ fill: var(--b1); }}
   .b2 {{ fill: var(--b2); }} .b3 {{ fill: var(--b3); }}
 </style>
